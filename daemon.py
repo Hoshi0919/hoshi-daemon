@@ -30,7 +30,7 @@ def get_sensors(sm):
     return [
         GitHubSensor(sm),
         EmailSensor(sm),
-        TaskSensor(TASKS_DIR),
+        TaskSensor(TASKS_DIR, sm),
         HeartbeatSensor(sm, CONFIG["heartbeat_interval"])
     ]
 

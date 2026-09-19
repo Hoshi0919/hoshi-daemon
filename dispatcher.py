@@ -1,5 +1,7 @@
 import datetime
+import os
 import subprocess
+import sys
 import time
 
 class Dispatcher:
@@ -11,9 +13,22 @@ class Dispatcher:
     def log(self, message):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}] {message}\n"
+
+        # If stdout is already redirected to log_file (daemon mode),
+        # printing to sys.stdout already writes to log_file. Avoid double writing.
+        try:
+            if os.path.exists(self.log_file) and os.fstat(sys.stdout.fileno()).st_ino == os.stat(self.log_file).st_ino:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                return
+        except Exception:
+            pass
+
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(line)
-        print(line, end="")
+        if sys.stdout.isatty():
+            sys.stdout.write(line)
+            sys.stdout.flush()
 
     def format_wake_prompt(self, events):
         event_lines = []
@@ -44,7 +59,7 @@ class Dispatcher:
             self.log("[DRY-RUN] Would execute hermes chat with prompt:\n" + prompt)
             self.sm.record_wake()
             for e in events:
-                if e.source in ("github", "email"):
+                if e.source in ("github", "email", "task"):
                     self.sm.mark_seen(e.source, e.item_id)
             return True
 
@@ -52,7 +67,7 @@ class Dispatcher:
         try:
             # Run hermes chat non-interactively
             cmd = ["hermes", "chat", "-q", prompt]
-            self.log(f"Executing: hermes chat -q ...")
+            self.log("Executing: hermes chat -q ...")
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             duration = int(time.time() - start_t)
             self.log(f"Hermes execution completed in {duration}s, exit code: {res.returncode}")
@@ -60,7 +75,7 @@ class Dispatcher:
             if res.returncode == 0:
                 self.sm.record_wake()
                 for e in events:
-                    if e.source in ("github", "email"):
+                    if e.source in ("github", "email", "task"):
                         self.sm.mark_seen(e.source, e.item_id)
                 return True
             else:

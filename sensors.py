@@ -47,7 +47,7 @@ class GitHubSensor:
                             title=f"GitHub [{repo}]: {subject}",
                             details=f"Reason: {reason}"
                         ))
-        except Exception as e:
+        except Exception:
             pass
         return events
 
@@ -83,8 +83,9 @@ class EmailSensor:
 
 
 class TaskSensor:
-    def __init__(self, tasks_dir):
+    def __init__(self, tasks_dir, state_manager=None):
         self.tasks_dir = Path(tasks_dir)
+        self.sm = state_manager
 
     def poll(self):
         events = []
@@ -93,8 +94,10 @@ class TaskSensor:
 
         for p in self.tasks_dir.glob("*.task"):
             try:
-                content = p.read_text(encoding="utf-8").strip()
                 item_id = f"task_{p.stem}"
+                if self.sm and self.sm.is_seen("task", item_id):
+                    continue
+                content = p.read_text(encoding="utf-8").strip()
                 events.append(Event(
                     source="task",
                     item_id=item_id,
@@ -113,11 +116,19 @@ class HeartbeatSensor:
 
     def poll(self):
         last_wake = self.sm.state.get("last_wake_timestamp", 0)
-        elapsed = time.time() - last_wake
+        now = time.time()
+        if last_wake <= 0:
+            return [Event(
+                source="heartbeat",
+                item_id=f"hb_{int(now)}",
+                title="Rhythm Heartbeat",
+                details="Initial heartbeat wake (daemon start or state initialized)."
+            )]
+        elapsed = now - last_wake
         if elapsed >= self.interval:
             return [Event(
                 source="heartbeat",
-                item_id=f"hb_{int(time.time())}",
+                item_id=f"hb_{int(now)}",
                 title="Rhythm Heartbeat",
                 details=f"No activity for {int(elapsed / 60)} minutes. Periodic autonomous reflection."
             )]
