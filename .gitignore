@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+daemon.log
+daemon.pid
+state.json
