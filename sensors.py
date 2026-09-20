@@ -1,3 +1,4 @@
+import sqlite3
 import json
 import subprocess
 import time
@@ -110,21 +111,37 @@ class TaskSensor:
 
 
 class HeartbeatSensor:
-    def __init__(self, state_manager, interval_seconds):
+    def __init__(self, state_manager, interval_seconds, db_path=None):
         self.sm = state_manager
         self.interval = interval_seconds
+        self.db_path = Path(db_path) if db_path else None
+
+    def get_latest_db_activity(self):
+        if not self.db_path or not self.db_path.exists():
+            return 0
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cur = conn.cursor()
+            val = cur.execute("SELECT MAX(COALESCE(last_activity_at, started_at, 0)) FROM sessions").fetchone()[0]
+            conn.close()
+            return float(val or 0)
+        except Exception:
+            return 0
 
     def poll(self):
         last_wake = self.sm.state.get("last_wake_timestamp", 0)
+        db_act = self.get_latest_db_activity()
+        effective_last_wake = max(last_wake, db_act)
+
         now = time.time()
-        if last_wake <= 0:
+        if effective_last_wake <= 0:
             return [Event(
                 source="heartbeat",
                 item_id=f"hb_{int(now)}",
                 title="Rhythm Heartbeat",
                 details="Initial heartbeat wake (daemon start or state initialized)."
             )]
-        elapsed = now - last_wake
+        elapsed = now - effective_last_wake
         if elapsed >= self.interval:
             return [Event(
                 source="heartbeat",

@@ -1,34 +1,20 @@
 import datetime
-import os
 import subprocess
-import sys
 import time
 
 class Dispatcher:
-    def __init__(self, state_manager, log_file, dry_run=False):
+    def __init__(self, state_manager, log_file, dry_run=False, max_turns=15, run_budget=180):
         self.sm = state_manager
         self.log_file = log_file
         self.dry_run = dry_run
+        self.max_turns = max_turns
+        self.run_budget = run_budget
 
     def log(self, message):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}] {message}\n"
-
-        # If stdout is already redirected to log_file (daemon mode),
-        # printing to sys.stdout already writes to log_file. Avoid double writing.
-        try:
-            if os.path.exists(self.log_file) and os.fstat(sys.stdout.fileno()).st_ino == os.stat(self.log_file).st_ino:
-                sys.stdout.write(line)
-                sys.stdout.flush()
-                return
-        except Exception:
-            pass
-
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(line)
-        if sys.stdout.isatty():
-            sys.stdout.write(line)
-            sys.stdout.flush()
 
     def format_wake_prompt(self, events):
         event_lines = []
@@ -59,30 +45,34 @@ class Dispatcher:
             self.log("[DRY-RUN] Would execute hermes chat with prompt:\n" + prompt)
             self.sm.record_wake()
             for e in events:
-                if e.source in ("github", "email", "task"):
+                if e.source in ("github", "email"):
                     self.sm.mark_seen(e.source, e.item_id)
             return True
 
         start_t = time.time()
         try:
-            # Run hermes chat non-interactively
-            cmd = ["hermes", "chat", "-q", prompt]
-            self.log("Executing: hermes chat -q ...")
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            cmd = [
+                "hermes", "chat",
+                "--max-turns", str(self.max_turns),
+                "--run-budget", str(self.run_budget),
+                "-q", prompt
+            ]
+            self.log(f"Executing: hermes chat --max-turns {self.max_turns} --run-budget {self.run_budget} -q ...")
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=self.run_budget + 60)
             duration = int(time.time() - start_t)
             self.log(f"Hermes execution completed in {duration}s, exit code: {res.returncode}")
 
             if res.returncode == 0:
                 self.sm.record_wake()
                 for e in events:
-                    if e.source in ("github", "email", "task"):
+                    if e.source in ("github", "email"):
                         self.sm.mark_seen(e.source, e.item_id)
                 return True
             else:
                 self.log(f"Hermes execution failed. stderr: {res.stderr[:300]}")
                 return False
         except subprocess.TimeoutExpired:
-            self.log("Hermes execution timed out after 600s")
+            self.log(f"Hermes execution timed out after {self.run_budget + 60}s")
             return False
         except Exception as ex:
             self.log(f"Error during dispatch: {ex}")

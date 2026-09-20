@@ -18,6 +18,7 @@ LOG_FILE = BASE_DIR / "daemon.log"
 STATE_FILE = BASE_DIR / "state.json"
 PAUSE_FILE = BASE_DIR / "PAUSE"
 TASKS_DIR = Path("/hoshi/tasks")
+STATE_DB = Path("/opt/data/state.db")
 
 CONFIG = {
     "check_interval": 30,         # poll sensors every 30 seconds
@@ -31,7 +32,7 @@ def get_sensors(sm):
         GitHubSensor(sm),
         EmailSensor(sm),
         TaskSensor(TASKS_DIR, sm),
-        HeartbeatSensor(sm, CONFIG["heartbeat_interval"])
+        HeartbeatSensor(sm, CONFIG["heartbeat_interval"], db_path=STATE_DB)
     ]
 
 def run_loop(dry_run=False):
@@ -63,7 +64,8 @@ def run_loop(dry_run=False):
                 can_wake, reason = sm.can_wake(
                     cooldown_seconds=CONFIG["cooldown_seconds"],
                     max_wakes_per_day=CONFIG["max_wakes_per_day"],
-                    pause_file=PAUSE_FILE
+                    pause_file=PAUSE_FILE,
+                    db_path=STATE_DB
                 )
                 if can_wake:
                     dispatcher.dispatch(all_events)
@@ -104,7 +106,8 @@ def cmd_check_once(dry_run=True):
     can_wake, reason = sm.can_wake(
         cooldown_seconds=CONFIG["cooldown_seconds"],
         max_wakes_per_day=CONFIG["max_wakes_per_day"],
-        pause_file=PAUSE_FILE
+        pause_file=PAUSE_FILE,
+        db_path=STATE_DB
     )
     print(f"Can wake? {can_wake} ({reason})")
 
@@ -168,6 +171,26 @@ def cmd_status():
     print(f"Last wake event:   {last_wake_str}")
     print(f"Wakes today:       {wakes_today} / {CONFIG['max_wakes_per_day']}")
     print(f"Pause file set?    {PAUSE_FILE.exists()}")
+
+    if STATE_DB.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(STATE_DB))
+            cur = conn.cursor()
+            val = cur.execute("SELECT MAX(COALESCE(last_activity_at, started_at, 0)) FROM sessions").fetchone()[0]
+            now_t = time.time()
+            active_cnt = cur.execute(
+                "SELECT count(*) FROM sessions WHERE ended_at IS NULL AND (? - COALESCE(last_activity_at, started_at, 0)) < 120",
+                (now_t,)
+            ).fetchone()[0]
+            conn.close()
+            if val:
+                act_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(val))
+                act_elapsed = int((now_t - val) / 60)
+                print(f"System last act:   {act_str} ({act_elapsed}m ago)")
+            print(f"Active sessions:   {active_cnt}")
+        except Exception as ex:
+            print(f"System DB error:   {ex}")
 
 def main():
     parser = argparse.ArgumentParser(description="Hoshi Autonomic Daemon")

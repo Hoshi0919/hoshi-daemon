@@ -1,3 +1,4 @@
+import sqlite3
 import json
 import os
 import time
@@ -32,7 +33,7 @@ class StateManager:
             json.dump(self.state, f, indent=2, ensure_ascii=False)
         tmp_path.replace(self.state_path)
 
-    def can_wake(self, cooldown_seconds, max_wakes_per_day, pause_file=None):
+    def can_wake(self, cooldown_seconds, max_wakes_per_day, pause_file=None, db_path=None):
         if pause_file and Path(pause_file).exists():
             return False, "Paused by pause file"
 
@@ -49,6 +50,20 @@ class StateManager:
         elapsed = now - self.state.get("last_wake_timestamp", 0)
         if elapsed < cooldown_seconds:
             return False, f"In cooldown ({int(cooldown_seconds - elapsed)}s remaining)"
+
+        if db_path and Path(db_path).exists():
+            try:
+                conn = sqlite3.connect(str(db_path))
+                cur = conn.cursor()
+                active_count = cur.execute(
+                    "SELECT count(*) FROM sessions WHERE ended_at IS NULL AND (? - COALESCE(last_activity_at, started_at, 0)) < 120",
+                    (now,)
+                ).fetchone()[0]
+                conn.close()
+                if active_count > 0:
+                    return False, f"Hermes session currently active ({active_count} active)"
+            except Exception:
+                pass
 
         return True, "OK"
 

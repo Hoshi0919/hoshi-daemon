@@ -1,3 +1,4 @@
+import sqlite3
 import unittest
 import tempfile
 import time
@@ -50,6 +51,30 @@ class TestSensorsAndDispatcher(unittest.TestCase):
         events3 = sensor.poll()
         self.assertEqual(len(events3), 1)
         self.assertIn("No activity for 2 minutes", events3[0].details)
+
+    def test_heartbeat_sensor_respects_db_activity(self):
+        db_path = self.tmp_path / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, started_at REAL NOT NULL, last_activity_at REAL)")
+        now = time.time()
+        conn.execute("INSERT INTO sessions VALUES ('s1', ?, ?)", (now - 30, now - 10))
+        conn.commit()
+        conn.close()
+
+        self.sm.state["last_wake_timestamp"] = now - 200
+        sensor = HeartbeatSensor(self.sm, interval_seconds=50, db_path=str(db_path))
+
+        events = sensor.poll()
+        self.assertEqual(len(events), 0)
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("UPDATE sessions SET last_activity_at = ?", (now - 120,))
+        conn.commit()
+        conn.close()
+
+        events2 = sensor.poll()
+        self.assertEqual(len(events2), 1)
+        self.assertIn("No activity for 2 minutes", events2[0].details)
 
     def test_dispatcher_formatting(self):
         disp = Dispatcher(self.sm, self.tmp_path / "test.log", dry_run=True)

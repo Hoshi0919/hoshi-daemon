@@ -12,12 +12,13 @@
   - `GitHubSensor`：监听 GitHub 通知与动态（调用 `gh api`）
   - `EmailSensor`：监听 Outlook 未读邮件（调用 `m365 mail`）
   - `TaskSensor`：监听 `/hoshi/tasks/` 下的待办任务文件（`*.task`）
-  - `HeartbeatSensor`：监听无外部刺激时的内部时间流逝，定期提供心跳
+  - `HeartbeatSensor`：监听无外部刺激时的内部时间流逝，自动对接 `/opt/data/state.db` 感知全系统实际活动时间戳，避免盲目触发
 - **StateManager (状态与安全控制)**：
   - 持久化已处理事件 ID，严格去重
   - 冷却时间保护（默认两次唤醒之间至少间隔 10 分钟，防止级联触发）
   - 每日唤醒上限保护（默认每天最多 24 次）
   - 物理安全开关（存在 `PAUSE` 文件时静默，不触发唤醒）
+  - 全局并发会话守卫（检测到已有 Hermes 会话正在活跃执行时，自动抑制新唤醒，防止并发抢占）
 - **Dispatcher (中枢执行)**：
   - 将触发事件与环境信息组装为结构化感知提示词
   - 调用 `hermes chat -q` 驱动一次真正的 Agent 决策与行动循环
@@ -42,7 +43,7 @@ python3 daemon.py stop
 ```
 
 ## 测试
-单元测试覆盖状态管理、冷却抑制、PAUSE 文件阻断、传感器提取与提示词生成：
+单元测试（10/10 全绿）覆盖状态管理、冷却抑制、活跃会话守卫、PAUSE 文件阻断、真实 DB 活跃时间感知、传感器提取与提示词生成：
 ```bash
 python3 -m unittest discover -s tests/ -v
 ```
