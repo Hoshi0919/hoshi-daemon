@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from unittest.mock import patch, MagicMock
 import tempfile
 import time
 import os
@@ -8,7 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from state_manager import StateManager
-from sensors import TaskSensor, HeartbeatSensor, Event
+from sensors import TaskSensor, HeartbeatSensor, GitHubSensor, EmailSensor, Event
 from dispatcher import Dispatcher
 
 class TestSensorsAndDispatcher(unittest.TestCase):
@@ -76,11 +77,93 @@ class TestSensorsAndDispatcher(unittest.TestCase):
         self.assertEqual(len(events2), 1)
         self.assertIn("No activity for 2 minutes", events2[0].details)
 
+    @patch("subprocess.run")
+    def test_github_sensor_success(self, mock_run):
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = '[{"id": "gh_101", "repository": {"full_name": "Hoshi0919/test"}, "subject": {"title": "Test Issue"}, "reason": "mention"}]'
+        mock_run.return_value = mock_res
+
+        sensor = GitHubSensor(self.sm, error_cooldown=60)
+        self.assertTrue(sensor.is_healthy)
+        events = sensor.poll()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].source, "github")
+        self.assertEqual(events[0].item_id, "gh_101")
+        self.assertIn("Hoshi0919/test", events[0].title)
+        self.assertTrue(sensor.is_healthy)
+
+    @patch("subprocess.run")
+    def test_github_sensor_backoff_on_error(self, mock_run):
+        mock_res = MagicMock()
+        mock_res.returncode = 1
+        mock_res.stdout = ""
+        mock_run.return_value = mock_res
+
+        sensor = GitHubSensor(self.sm, error_cooldown=60)
+        events = sensor.poll()
+        self.assertEqual(len(events), 0)
+        self.assertFalse(sensor.is_healthy)
+        self.assertEqual(sensor.consecutive_failures, 1)
+
+        # Second poll immediately afterwards should skip subprocess.run due to backoff
+        mock_run.reset_mock()
+        events2 = sensor.poll()
+        self.assertEqual(len(events2), 0)
+        mock_run.assert_not_called()
+
+    @patch("subprocess.run")
+    def test_email_sensor_success(self, mock_run):
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = '[{"id": "em_202", "isRead": false, "subject": "Hello Hoshi", "from": {"emailAddress": {"address": "friend@example.com"}}, "receivedDateTime": "2026-09-21T22:00:00Z"}]'
+        mock_run.return_value = mock_res
+
+        sensor = EmailSensor(self.sm, error_cooldown=60)
+        self.assertTrue(sensor.is_healthy)
+        events = sensor.poll()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].source, "email")
+        self.assertEqual(events[0].item_id, "em_202")
+        self.assertIn("friend@example.com", events[0].title)
+        self.assertTrue(sensor.is_healthy)
+
+    @patch("subprocess.run")
+    def test_email_sensor_backoff_and_recovery(self, mock_run):
+        # 1. Error state
+        fail_res = MagicMock()
+        fail_res.returncode = 1
+        fail_res.stdout = "Auth error"
+        mock_run.return_value = fail_res
+
+        sensor = EmailSensor(self.sm, error_cooldown=10)
+        events = sensor.poll()
+        self.assertEqual(len(events), 0)
+        self.assertFalse(sensor.is_healthy)
+        self.assertEqual(sensor.consecutive_failures, 1)
+
+        # Fast call skipped
+        mock_run.reset_mock()
+        self.assertEqual(len(sensor.poll()), 0)
+        mock_run.assert_not_called()
+
+        # 2. Advance past backoff window
+        sensor.last_failure_time = time.time() - 20
+        ok_res = MagicMock()
+        ok_res.returncode = 0
+        ok_res.stdout = "[]"
+        mock_run.return_value = ok_res
+
+        events2 = sensor.poll()
+        self.assertEqual(len(events2), 0)
+        self.assertTrue(sensor.is_healthy)
+        self.assertEqual(sensor.consecutive_failures, 0)
+
     def test_dispatcher_formatting(self):
         disp = Dispatcher(self.sm, self.tmp_path / "test.log", dry_run=True)
-        events = [\
-            Event(source="github", item_id="1", title="New Issue #4", details="Bug in parser"),\
-            Event(source="heartbeat", item_id="hb_1", title="Periodic Heartbeat", details="Time to reflect")\
+        events = [
+            Event(source="github", item_id="1", title="New Issue #4", details="Bug in parser"),
+            Event(source="heartbeat", item_id="hb_1", title="Periodic Heartbeat", details="Time to reflect")
         ]
         prompt = disp.format_wake_prompt(events)
         self.assertIn("【Hoshi 自主神经感知唤醒】", prompt)
