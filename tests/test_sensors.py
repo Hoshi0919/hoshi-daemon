@@ -34,6 +34,13 @@ class TestSensorsAndDispatcher(unittest.TestCase):
         self.assertIn("audit.task", events[0].title)
         self.assertIn("Run audit", events[0].details)
 
+        # Test with state manager suppression
+        sensor_with_sm = TaskSensor(tasks_dir, self.sm)
+        events_sm = sensor_with_sm.poll()
+        self.assertEqual(len(events_sm), 1)
+        self.sm.mark_seen("task", events_sm[0].item_id)
+        self.assertEqual(len(sensor_with_sm.poll()), 0)
+
     def test_heartbeat_sensor(self):
         sensor = HeartbeatSensor(self.sm, interval_seconds=50)
         # initial last_wake is 0, should report initial wake

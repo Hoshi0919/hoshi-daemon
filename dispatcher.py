@@ -45,7 +45,7 @@ class Dispatcher:
             self.log("[DRY-RUN] Would execute hermes chat with prompt:\n" + prompt)
             self.sm.record_wake()
             for e in events:
-                if e.source in ("github", "email"):
+                if e.source in ("github", "email", "task"):
                     self.sm.mark_seen(e.source, e.item_id)
             return True
 
@@ -65,7 +65,7 @@ class Dispatcher:
             if res.returncode == 0:
                 self.sm.record_wake()
                 for e in events:
-                    if e.source in ("github", "email"):
+                    if e.source in ("github", "email", "task"):
                         self.sm.mark_seen(e.source, e.item_id)
                 return True
             else:
