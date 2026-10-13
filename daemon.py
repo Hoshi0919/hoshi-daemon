@@ -23,7 +23,7 @@ STATE_DB = Path("/opt/data/state.db")
 CONFIG = {
     "check_interval": 30,         # poll sensors every 30 seconds
     "cooldown_seconds": 600,       # 10 minutes between wakes
-    "heartbeat_interval": 7200,    # 2 hours without events -> wake
+    "heartbeat_interval": 18000,   # 5 hours fallback heartbeat (> 240m cron)
     "max_wakes_per_day": 24,       # max wakes in 24 hours
 }
 
